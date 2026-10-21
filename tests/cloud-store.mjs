@@ -1,0 +1,31 @@
+import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+let calls=[];let revision=0;let fail=false;
+globalThis.__fakeSupabase={rpc:async(name,args)=>{
+  if(name==='read_farm') return {data:{revision,workers:[],pineapples:[],nourishments:[],payments:[],settings:{}},error:null};
+  calls.push(structuredClone(args));
+  if(fail) return {error:{message:'Records changed in another session'}};
+  if(args.expected_revision!==revision) return {error:{message:'Revision conflict'}};
+  return {data:++revision,error:null};
+}};
+const source=readFileSync(new URL('../src/services/cloudStore.ts',import.meta.url),'utf8')
+  .replace("import { supabase } from '../lib/supabase';",'const supabase = globalThis.__fakeSupabase;');
+const result=await build({stdin:{contents:source,loader:'ts'},bundle:true,write:false,format:'esm',platform:'node'});
+const store=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
+await store.loadFarm({id:'owner',role:'super_admin'});
+store.updateFarm('workers',[{id:'w-1',name:'A',createdAt:'2026-10-21'}]);
+store.updateFarm('settings',{businessName:'Farm'});
+await store.flushFarm();
+assert.equal(calls.length,1);assert.equal(calls[0].payload.workers[0].created_at,'2026-10-21');
+assert.equal(store.getSyncStatus().state,'saved');
+fail=true;store.updateFarm('workers',[{id:'w-2',name:'Unsaved'}]);
+await assert.rejects(store.flushFarm,/another session/);
+assert.equal(store.getSyncStatus().state,'error');
+assert.equal(store.getFarmData().workers[0].name,'Unsaved');
+assert.throws(()=>store.updateFarm('workers',[]),/Reload/);
+store.resetFarm();
+await store.loadFarm({id:'viewer',role:'admin'});
+assert.throws(()=>store.updateFarm('workers',[]),/Only the farm owner/);
+store.resetFarm();
+console.log('PASS: grouped saves, database field mapping, save status, conflict recovery, unsaved data retention, read-only protection');

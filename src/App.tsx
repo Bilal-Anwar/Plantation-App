@@ -1,3 +1,4 @@
+import { CloudGate } from './components/CloudGate';
 import React from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
@@ -31,6 +32,7 @@ const MainLayout: React.FC = () => {
       <AlertBanner />
 
       {/* Main Content Area */}
+      <fieldset disabled={!isSuperAdmin} className="contents">
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-5">
         {currentTab === 'dashboard' && <Dashboard />}
         {currentTab === 'plantations' && <Plantations />}
@@ -38,17 +40,21 @@ const MainLayout: React.FC = () => {
         {currentTab === 'ledger' && <Ledger />}
         {currentTab === 'excel' && <ExcelHub />}
         {currentTab === 'settings' && <SettingsView />}
-        {currentTab === 'admins' && (isSuperAdmin ? <AdminManagement /> : <Dashboard />)}
+        {currentTab === 'admins' && isSuperAdmin && <AdminManagement />}
       </main>
+      </fieldset>
 
+      {!isSuperAdmin && <p className="text-center text-sm p-2">Read-only account. Contact the owner to make changes.</p>}
       {/* Global Modals */}
+      <fieldset disabled={!isSuperAdmin}>
       <AddPineappleModal />
       <MarkNourishModal />
       <PineappleDetailModal />
       <AddWorkerModal />
       <RecordPaymentModal />
       <WorkerDetailModal />
-      <SlotConfirmationPopup />
+      {isSuperAdmin && <SlotConfirmationPopup />}
+      </fieldset>
 
       {/* Mobile Bottom Navigation */}
       <BottomNav />
@@ -77,8 +83,10 @@ const AuthGate: React.FC = () => {
 
 export default function App() {
   return (
+    <CloudGate>
     <AppProvider>
       <AuthGate />
     </AppProvider>
+    </CloudGate>
   );
 }

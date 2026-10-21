@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase';
+import { flushFarm } from '../services/cloudStore';
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Worker,
@@ -141,7 +143,7 @@ interface AppContextType {
   }) => { success: boolean; error?: string };
   updateAdmin: (id: string, updates: Partial<AdminUser>) => { success: boolean; error?: string };
   deleteAdmin: (id: string) => { success: boolean; error?: string };
-  changePassword: (userId: string, newPassword: string) => { success: boolean; error?: string };
+  changePassword: (userId: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   hasPermission: (permission: keyof AdminUser) => boolean;
 }
 
@@ -211,247 +213,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Boolean(currentUser[permission]);
   }, [currentUser]);
 
-  const login = useCallback((username: string, pass: string): { success: boolean; error?: string } => {
-    const trimmedUser = username.trim().toLowerCase();
-    const currentAdmins = StorageService.getAdmins();
-    const found = currentAdmins.find(
-      a =>
-        a.username.toLowerCase() === trimmedUser ||
-        (a.role === 'super_admin' && (trimmedUser === 'bilalanwar' || trimmedUser === 'bilal' || trimmedUser === 'superadmin'))
-    );
-
-    if (!found) {
-      return { success: false, error: 'Yeh username mojood nahi hai. Baraye meherbani durust username likhein.' };
-    }
-
-    if (found.password !== pass) {
-      return { success: false, error: 'Galat password darj kiya hai. Dobara koshish karein.' };
-    }
-
-    if (found.status === 'inactive') {
-      return { success: false, error: 'Aapka account filhal inactive/deactivated hai. Super Admin se rabta karein.' };
-    }
-
-    const updatedUser: AdminUser = {
-      ...found,
-      lastLogin: new Date().toISOString(),
-    };
-
-    const nextAdmins = currentAdmins.map(a => a.id === updatedUser.id ? updatedUser : a);
-    setAdminsState(nextAdmins);
-    StorageService.saveAdmins(nextAdmins);
-
-    setCurrentUserState(updatedUser);
-    StorageService.saveCurrentUser(updatedUser);
-
-    StorageService.addAuditLog(updatedUser.username, 'LOGIN', `${updatedUser.name} (${updatedUser.role}) logged in successfully`);
-    setAuditLogsState(StorageService.getAuditLogs());
-
-    showToast(`Khushamdeed, ${updatedUser.name}! Aap login ho gaye hain.`, 'success');
-    return { success: true };
-  }, [showToast]);
-
-  const logout = useCallback(() => {
-    if (currentUser) {
-      StorageService.addAuditLog(currentUser.username, 'LOGOUT', `${currentUser.name} logged out`);
-      setAuditLogsState(StorageService.getAuditLogs());
-    }
-    setCurrentUserState(null);
-    StorageService.saveCurrentUser(null);
-    showToast('Aap logout ho chuke hain.', 'info');
-  }, [currentUser, showToast]);
-
-  const createAdmin = useCallback((adminData: {
-    username: string;
-    password: string;
-    name: string;
-    role: UserRole;
-    status: 'active' | 'inactive';
-    canManageWorkers?: boolean;
-    canRecordPayments?: boolean;
-    canManageBatches?: boolean;
-    canManageSettings?: boolean;
-    canDeleteRecords?: boolean;
-  }): { success: boolean; error?: string } => {
-    if (!isSuperAdmin) {
-      return { success: false, error: 'Sirf Super Admin naye admins create kar sakta hai.' };
-    }
-
-    const trimmedUser = adminData.username.trim().toLowerCase();
-    if (!trimmedUser || trimmedUser.length < 3) {
-      return { success: false, error: 'Username kam az kam 3 characters ka hona chahiye.' };
-    }
-
-    if (!adminData.password || adminData.password.length < 4) {
-      return { success: false, error: 'Password kam az kam 4 characters ka hona chahiye.' };
-    }
-
-    const currentAdmins = StorageService.getAdmins();
-    const exists = currentAdmins.some(a => a.username.toLowerCase() === trimmedUser);
-    if (exists) {
-      return { success: false, error: 'Yeh username pehle se kisi aur admin ka hai. Koi doosra username chunein.' };
-    }
-
-    const newAdmin: AdminUser = {
-      id: `admin-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      username: trimmedUser,
-      password: adminData.password,
-      name: adminData.name.trim() || trimmedUser,
-      role: adminData.role,
-      status: adminData.status,
-      createdAt: new Date().toISOString(),
-      canManageWorkers: adminData.role === 'super_admin' ? true : Boolean(adminData.canManageWorkers),
-      canRecordPayments: adminData.role === 'super_admin' ? true : Boolean(adminData.canRecordPayments),
-      canManageBatches: adminData.role === 'super_admin' ? true : Boolean(adminData.canManageBatches),
-      canManageSettings: adminData.role === 'super_admin' ? true : Boolean(adminData.canManageSettings),
-      canDeleteRecords: adminData.role === 'super_admin' ? true : Boolean(adminData.canDeleteRecords),
-    };
-
-    const nextAdmins = [...currentAdmins, newAdmin];
-    setAdminsState(nextAdmins);
-    StorageService.saveAdmins(nextAdmins);
-
-    StorageService.addAuditLog(
-      currentUser?.username || 'superadmin',
-      'CREATE_ADMIN',
-      `Created new ${newAdmin.role}: ${newAdmin.name} (@${newAdmin.username})`
-    );
-    setAuditLogsState(StorageService.getAuditLogs());
-
-    showToast(`Naya admin (@${newAdmin.username}) kamyabi se create ho gaya!`, 'success');
-    return { success: true };
-  }, [isSuperAdmin, currentUser, showToast]);
-
-  const updateAdmin = useCallback((id: string, updates: Partial<AdminUser>): { success: boolean; error?: string } => {
-    if (!isSuperAdmin && currentUser?.id !== id) {
-      return { success: false, error: 'Aap sirf apna account update kar sakte hain.' };
-    }
-
-    const currentAdmins = StorageService.getAdmins();
-    const target = currentAdmins.find(a => a.id === id);
-    if (!target) {
-      return { success: false, error: 'Admin record nahi mila.' };
-    }
-
-    // Safety: Cannot deactivate or demote the last active super_admin
-    if (target.role === 'super_admin' && (updates.role === 'admin' || updates.status === 'inactive')) {
-      const activeSuperAdmins = currentAdmins.filter(a => a.role === 'super_admin' && a.status === 'active' && a.id !== id);
-      if (activeSuperAdmins.length === 0) {
-        return { success: false, error: 'Aap aakhri Super Admin ko demote ya deactivate nahi kar sakte.' };
-      }
-    }
-
-    // Check username uniqueness if changed
-    if (updates.username && updates.username.toLowerCase() !== target.username.toLowerCase()) {
-      const exists = currentAdmins.some(a => a.id !== id && a.username.toLowerCase() === updates.username?.toLowerCase());
-      if (exists) {
-        return { success: false, error: 'Yeh username pehle se kisi aur admin ka hai.' };
-      }
-    }
-
-    const updated: AdminUser = {
-      ...target,
-      ...updates,
-      username: updates.username ? updates.username.trim().toLowerCase() : target.username,
-      name: updates.name ? updates.name.trim() : target.name,
-    };
-
-    const nextAdmins = currentAdmins.map(a => a.id === id ? updated : a);
-    setAdminsState(nextAdmins);
-    StorageService.saveAdmins(nextAdmins);
-
-    if (currentUser?.id === id) {
-      setCurrentUserState(updated);
-      StorageService.saveCurrentUser(updated);
-    }
-
-    StorageService.addAuditLog(
-      currentUser?.username || 'admin',
-      'UPDATE_ADMIN',
-      `Updated admin: ${updated.name} (@${updated.username})`
-    );
-    setAuditLogsState(StorageService.getAuditLogs());
-
-    showToast('Admin update ho gaya.', 'success');
-    return { success: true };
-  }, [isSuperAdmin, currentUser, showToast]);
-
-  const deleteAdmin = useCallback((id: string): { success: boolean; error?: string } => {
-    if (!isSuperAdmin) {
-      return { success: false, error: 'Sirf Super Admin doosre admins ko delete kar sakta hai.' };
-    }
-
-    if (currentUser?.id === id) {
-      return { success: false, error: 'Aap khud apna active account delete nahi kar sakte.' };
-    }
-
-    const currentAdmins = StorageService.getAdmins();
-    const target = currentAdmins.find(a => a.id === id);
-    if (!target) {
-      return { success: false, error: 'Admin record nahi mila.' };
-    }
-
-    if (target.role === 'super_admin') {
-      const otherSuperAdmins = currentAdmins.filter(a => a.role === 'super_admin' && a.id !== id);
-      if (otherSuperAdmins.length === 0) {
-        return { success: false, error: 'System mai kam az kam ek Super Admin hona lazmi hai.' };
-      }
-    }
-
-    const nextAdmins = currentAdmins.filter(a => a.id !== id);
-    setAdminsState(nextAdmins);
-    StorageService.saveAdmins(nextAdmins);
-
-    StorageService.addAuditLog(
-      currentUser?.username || 'superadmin',
-      'DELETE_ADMIN',
-      `Deleted admin: ${target.name} (@${target.username})`
-    );
-    setAuditLogsState(StorageService.getAuditLogs());
-
-    showToast(`Admin (@${target.username}) delete ho gaya.`, 'info');
-    return { success: true };
-  }, [isSuperAdmin, currentUser, showToast]);
-
-  const changePassword = useCallback((userId: string, newPass: string): { success: boolean; error?: string } => {
-    if (!isSuperAdmin && currentUser?.id !== userId) {
-      return { success: false, error: 'Aap sirf apna password tabdeel kar sakte hain.' };
-    }
-
-    if (!newPass || newPass.length < 4) {
-      return { success: false, error: 'Naya password kam az kam 4 characters ka hona chahiye.' };
-    }
-
-    const currentAdmins = StorageService.getAdmins();
-    const target = currentAdmins.find(a => a.id === userId);
-    if (!target) {
-      return { success: false, error: 'Admin account nahi mila.' };
-    }
-
-    const updated: AdminUser = {
-      ...target,
-      password: newPass,
-    };
-
-    const nextAdmins = currentAdmins.map(a => a.id === userId ? updated : a);
-    setAdminsState(nextAdmins);
-    StorageService.saveAdmins(nextAdmins);
-
-    if (currentUser?.id === userId) {
-      setCurrentUserState(updated);
-      StorageService.saveCurrentUser(updated);
-    }
-
-    StorageService.addAuditLog(
-      currentUser?.username || 'user',
-      'CHANGE_PASSWORD',
-      `Password changed for @${target.username}`
-    );
-    setAuditLogsState(StorageService.getAuditLogs());
-
-    showToast(`@${target.username} ka password tabdeel ho gaya!`, 'success');
-    return { success: true };
-  }, [isSuperAdmin, currentUser, showToast]);
+  const login = () => ({ success: false, error: 'Sign in using Supabase Auth.' });
+  const logout = () => { void flushFarm().then(async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) showToast(error.message, 'error');
+  }).catch(err => showToast(err.message,'error')); };
+  const managedInSupabase = () => ({ success: false, error: 'Manage farm users in the Supabase dashboard.' });
+  const createAdmin = managedInSupabase;
+  const updateAdmin = managedInSupabase;
+  const deleteAdmin = managedInSupabase;
+  const changePassword = async (userId: string, password: string) => {
+    if (userId !== currentUser?.id || password.length < 8) return {success:false,error:'Use at least 8 characters for your own account.'};
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) return {success:false,error:error.message};
+    showToast('Password updated.', 'success'); return {success:true};
+  };
 
   // Update settings wrapper
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
@@ -466,7 +242,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Workers CRUD
   const addWorker = useCallback((w: { name: string; phone?: string; notes?: string }): Worker => {
     const newWorker: Worker = {
-      id: `w-${Date.now().toString().slice(-6)}`,
+      id: `w-${crypto.randomUUID()}`,
       name: w.name.trim(),
       phone: w.phone?.trim(),
       notes: w.notes?.trim(),
@@ -491,13 +267,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [showToast]);
 
   const deleteWorker = useCallback((id: string) => {
+    if (pineapples.some(p => p.plantedByWorkerId === id) || nourishments.some(n => n.workerId === id) || payments.some(p => p.workerId === id)) {
+      showToast('This worker has historical records and cannot be deleted.', 'warning'); return;
+    }
     setWorkersState(prev => {
       const next = prev.filter(w => w.id !== id);
       StorageService.saveWorkers(next);
       return next;
     });
     showToast('Worker deleted', 'info');
-  }, [showToast]);
+  }, [pineapples, nourishments, payments, showToast]);
 
   // Pineapples CRUD + Automatic 7-slot Schedule Creation
   const addPineapple = useCallback((data: {
@@ -600,6 +379,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     cost?: number,
     notes?: string
   ) => {
+    const slots = nourishments.filter(n => n.pineappleId === pineappleId);
+    const target = slots.find(n => n.slotNumber === slotNumber);
+    if (!target || target.status === 'done' || slots.some(n => n.slotNumber < slotNumber && n.status !== 'done')) {
+      showToast('Complete the previous slots first. This slot may already be done.', 'warning'); return;
+    }
     const finalCost = cost !== undefined ? cost : settings.nourishCost;
 
     const ONE_HOUR = settings.intervalHours * 60 * 60 * 1000;
@@ -653,7 +437,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     audioAlert.playSuccessChime();
     showToast(`Slot #${slotNumber} complete. Agle ghante ka waqt shuru.`, 'success');
-  }, [settings.nourishCost, settings.intervalHours, showToast]);
+  }, [nourishments, settings.nourishCost, settings.intervalHours, showToast]);
 
   // Skip and reset slot when 10 min window expires or user clicks "No"
   const skipAndResetSlot = useCallback((pineappleId: string, slotNumber: number) => {
@@ -767,7 +551,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Payments CRUD
   const recordPayment = useCallback((workerId: string, amount: number, date: string, note?: string) => {
     const newPayment: Payment = {
-      id: `pay-${Date.now().toString().slice(-6)}`,
+      id: `pay-${crypto.randomUUID()}`,
       workerId,
       amount,
       date: new Date(date).toISOString(),
@@ -1124,7 +908,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Background auto-sync when enabled and data changes
   useEffect(() => {
     const url = settings.sheetSyncUrl;
-    if (!url || !settings.autoSyncToSheet) return;
+    if (!url || !settings.autoSyncToSheet || !isSuperAdmin) return;
     const timer = setTimeout(() => {
       const payload = buildSheetSyncPayload(
         pineapples,
@@ -1145,7 +929,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 2500);
 
     return () => clearTimeout(timer);
-  }, [pineapples, nourishments, payments, workers, settings.sheetSyncUrl, settings.autoSyncToSheet, workerHisabSummaries, settings]);
+  }, [pineapples, nourishments, payments, workers, settings.sheetSyncUrl, settings.autoSyncToSheet, workerHisabSummaries, settings.businessName, settings.timezone, settings.currency, isSuperAdmin]);
 
   return (
     <AppContext.Provider

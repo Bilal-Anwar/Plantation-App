@@ -48,18 +48,18 @@ export const Navbar: React.FC = () => {
     { id: 'admins', label: 'Admins', isCrown: true, superAdminOnly: true },
   ];
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
-    if (!newPassword || newPassword.length < 4) {
-      showToast('Password kam az kam 4 characters ka ho.', 'error');
+    if (!newPassword || newPassword.length < 8) {
+      showToast('Password kam az kam 8 characters ka ho.', 'error');
       return;
     }
-    const res = changePassword(currentUser.id, newPassword);
+    const res = await changePassword(currentUser.id, newPassword);
     if (res.success) {
       setIsChangePassOpen(false);
       setNewPassword('');
-    }
+    } else { showToast(res.error || 'Password update failed.', 'error'); }
   };
 
   // Extract clean short name for compact display (e.g. "Bilal")
@@ -260,7 +260,7 @@ export const Navbar: React.FC = () => {
                 type="password"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
-                placeholder="Kam az kam 4 characters"
+                placeholder="Kam az kam 8 characters"
                 autoFocus
                 required
                 className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"

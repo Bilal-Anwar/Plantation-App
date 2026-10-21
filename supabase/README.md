@@ -1,12 +1,17 @@
-# Supabase preparation
+# Supabase setup
 
-Demo seeds and built-in accounts have been removed. Existing known sample IDs are cleaned once at browser startup; other locally created records are retained. Demo reset and fast-forward controls are removed.
+1. Open your project's SQL Editor and run `schema.sql`. It is repeatable and preserves existing rows.
+2. Create your actual email/password account in **Authentication > Users**. No default account is created.
+3. Copy that user's UUID and run the following SQL after replacing the UUID and name:
 
-1. Run schema.sql in your project's SQL Editor once.
-2. In Authentication > Users, create your real user (email/password).
-3. In SQL Editor, add that user's UUID to farm_members with your name and super_admin role. Never store passwords in this table.
-4. The project URL and publishable key are configured in .env.local. Copy .env.example for other environments.
+```sql
+insert into public.farm_members(user_id,name,role,active)
+values ('YOUR-AUTH-USER-UUID','Your name','super_admin',true);
+```
 
-Current stage: preparation only. The application still uses the localStorage repository. Supabase client and RLS-protected tables are ready for the next migration phase; login, CRUD transactions, admin management and import must be adapted before live use. All database writes are deliberately denied by the current policies. The publishable key cannot execute this schema or create users.
+4. Configure `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local` and in Vercel's project environment settings. Restart/redeploy after changing them.
+5. Sign in to the app with the Auth user's email/password. Add other existing Auth users from the app's Farm access screen. Admins are read-only; super admins can edit.
 
-No cloud data has been written. Do not upload legacy admin/password backups. Keep a JSON backup of any real local records before migrating. Browser-local data does not sync between devices.
+The tables store workers, batches, schedules, payments, settings and server-written audit events. Record access requires an active farm membership. Direct client writes are denied; `save_farm` validates membership and revision, then commits records together. Constraints enforce references, nonnegative costs, complete schedules and completed batch integrity. Never put Auth passwords or service-role keys into app tables or frontend variables.
+
+The schema has been tested locally against embedded PostgreSQL. Applying it remotely and verifying an authenticated login require project management access. CLI authentication helpers in `scripts/` are optional; verification codes are entered in the local terminal, never in chat.
