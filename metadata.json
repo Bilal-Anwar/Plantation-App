@@ -1,0 +1,6 @@
+{
+  "name": "Pineapple Plantation Tracker",
+  "description": "Comprehensive plantation management system for tracking pineapple batches, hourly nourishment schedules, worker hisab, and Excel ledger.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
